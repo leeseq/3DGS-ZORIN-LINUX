@@ -205,6 +205,11 @@ The commands in `METRICS_REPORT.md` demonstrate the ffmpeg filters you need;
 just substitute your own source/target paths. For LPIPS, activate the Python
 virtualenv and run the same Python snippet used in that report.
 
+A complete worked example from this repository (split strategy, registration
+commands, and measured hold-out metrics) is documented in:
+
+- [HOLDOUT_EVAL_REPORT.md](HOLDOUT_EVAL_REPORT.md)
+
 > Tip: the `--` argument forwarding example in earlier sections shows how you
 > can pass extra reconstruction flags to `run_gs_pipeline.sh` when performing
 > the manual training stage.

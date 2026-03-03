@@ -1,5 +1,9 @@
 # Image/Video Similarity Report
 
+> This report covers direct frame similarity for `scene.mp4` vs `scene_dense/images`
+> on the same extracted sequence. For leakage-safe hold-out evaluation, see
+> [HOLDOUT_EVAL_REPORT.md](HOLDOUT_EVAL_REPORT.md).
+
 ## Scope
 
 This report summarizes quality metrics computed for the same comparison setup:
