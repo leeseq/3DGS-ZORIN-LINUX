@@ -112,6 +112,29 @@ Primary outputs are written inside `--workspace`.
 
 `*` is typically `triangulated` (default flow) or `0` (when sparse densification is disabled or unavailable).
 
+## Results (Screenshots)
+
+Add your screenshots to:
+
+```text
+assets/screenshots/
+```
+
+Recommended filenames:
+- `assets/screenshots/input_frame.png`
+- `assets/screenshots/sparse_cloud.png`
+- `assets/screenshots/dense_cloud.png`
+
+Example display block:
+
+<p align="center">
+  <img src="assets/screenshots/input_frame.png" alt="Input frame" width="31%" />
+  <img src="assets/screenshots/sparse_cloud.png" alt="Sparse point cloud result" width="31%" />
+  <img src="assets/screenshots/dense_cloud.png" alt="Dense point cloud result" width="31%" />
+</p>
+
+If your files use different names, update the `src` paths above accordingly.
+
 ## Quality Guidance
 
 - Capture with stable motion and strong parallax around the subject.
