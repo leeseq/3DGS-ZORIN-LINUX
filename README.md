@@ -119,6 +119,16 @@ Primary outputs are written inside `--workspace`.
   <img src="assets/screenshots/mask.png" alt="Mask result" width="48%" />
 </p>
 
+## Metrics Summary
+
+For the comparison of `scene.mp4` (decoded at `2 fps`) against the GS input frames in `scene_dense/images` (43 frames):
+
+- **PSNR:** `35.096 dB` (higher is better)
+- **SSIM:** `0.995234` (closer to 1 is better)
+- **LPIPS (AlexNet):** `0.000000` (lower is better)
+
+Detailed methodology, channel-wise values, and reproducibility commands are in [METRICS_REPORT.md](METRICS_REPORT.md).
+
 ## Quality Guidance
 
 - Capture with stable motion and strong parallax around the subject.
