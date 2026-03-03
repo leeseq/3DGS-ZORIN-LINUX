@@ -1,30 +1,40 @@
-# Gaussian Splatting Data Prep Pipeline (`ffmpeg` + `COLMAP`)
+# Gaussian Splatting Data Preparation Pipeline
 
-This repo provides an optimized pipeline to generate `.ply` files for Gaussian Splatting initialization.
+High-quality, reproducible data preparation for 3D Gaussian Splatting using `ffmpeg` and `COLMAP`.
+
+This project automates:
+- Frame extraction (or image folder ingestion)
+- Feature extraction and matching
+- Sparse reconstruction with automatic fallback mapper settings
+- Optional sparse point densification (`point_triangulator`)
+- Optional dense reconstruction (`PatchMatch` + `stereo_fusion`)
+- Export of `.ply` and COLMAP text models for downstream 3DGS training
 
 ## Requirements
 
+- Linux shell (`bash`)
 - `ffmpeg`
-- `colmap` (GPU build recommended)
-  - the script now automatically falls back to `/snap/bin/colmap` if the command isn't otherwise
-  - if that still fails, set `COLMAP_BIN` to the full path before running the script
+- `colmap` (CUDA-enabled build recommended for dense reconstruction)
 
-Check:
+Check dependencies:
 
 ```bash
 ffmpeg -version
-# should print help; if not on PATH specify full path or set COLMAP_BIN
 colmap -h
+```
+
+If `colmap` is not on `PATH`, the script tries `/snap/bin/colmap`.  
+You can also set it explicitly:
+
+```bash
+export COLMAP_BIN=/absolute/path/to/colmap
 ```
 
 ## Quick Start
 
 ```bash
-# if colmap isn't in PATH (snap installs are automatically handled):
-#   export COLMAP_BIN=/path/to/colmap
-# or run with absolute path: COLMAP_BIN=/path/to/colmap ./run_gs_pipeline.sh \
 ./run_gs_pipeline.sh \
-  --input /path/to/video.mp4 \
+  --input /path/to/capture.mp4 \
   --workspace ./scene01 \
   --fps 2 \
   --max-image-size 3200 \
@@ -33,58 +43,107 @@ colmap -h
   --dense
 ```
 
-For denser sparse `.ply` output (recommended when your sparse cloud looks thin):
-
-```bash
-./run_gs_pipeline.sh \
-  --input /path/to/video.mp4 \
-  --workspace ./scene_dense \
-  --fps 2 \
-  --matcher exhaustive \
-  --sift-max-num-features 12000 \
-  --sift-peak-threshold 0.004 \
-  --sift-match-max-ratio 0.85 \
-  --sift-match-min-inliers 12 \
-  --mapper-min-num-matches 15 \
-  --mapper-init-min-num-inliers 80 \
-  --mapper-abs-pose-min-inliers 20 \
-  --mapper-filter-min-tri-angle 1.0 \
-  --mapper-tri-min-angle 1.0
-```
-
-For image folder input:
+For input images instead of video:
 
 ```bash
 ./run_gs_pipeline.sh --input /path/to/images --workspace ./scene02 --dense
 ```
 
+## Typical Workflows
+
+Best quality (slower):
+
+```bash
+./run_gs_pipeline.sh \
+  --input ./capture.mp4 \
+  --workspace ./scene_quality \
+  --profile quality \
+  --matcher exhaustive \
+  --dense
+```
+
+Faster high-quality preset:
+
+```bash
+./run_gs_pipeline.sh \
+  --input ./capture.mp4 \
+  --workspace ./scene_fast \
+  --profile fast_hq
+```
+
+Sparse-only export:
+
+```bash
+./run_gs_pipeline.sh \
+  --input ./capture.mp4 \
+  --workspace ./scene_sparse \
+  --no-sparse-densify
+```
+
+## Key Arguments
+
+- `--input`: Video file or image directory (required)
+- `--workspace`: Output workspace directory (required)
+- `--profile quality|fast_hq`: Sparse reconstruction preset
+- `--dense`: Enable dense reconstruction
+- `--dense-profile balanced|hq`: Dense quality/speed preset
+- `--dense-input-type geometric|photometric`: Stereo fusion mode
+- `--fps`: Frame extraction rate for video input
+- `--max-image-size`: Feature extraction image clamp
+- `--camera-model`: COLMAP camera model (`OPENCV` and `RADIAL` recommended for phones)
+- `--matcher exhaustive|sequential`: Matching strategy
+- `--mask-path`: Directory of per-image masks for dynamic-object suppression
+- `--cpu`: Force CPU SIFT/matching
+- `--print-train-cmd`: Print a suggested `train.py` command
+
+Use `./run_gs_pipeline.sh --help` for the full list.
+
 ## Outputs
 
-- Sparse PLY: `workspace/sparse/0/points3D_sparse.ply`
-- Sparse text model: `workspace/sparse/0/text/`
-- Dense PLY (if `--dense`): `workspace/dense/fused_dense.ply`
+Primary outputs are written inside `--workspace`.
 
-Note: by default, the script now runs a sparse densification pass (`point_triangulator`) and may write the final sparse model under `workspace/sparse/triangulated/`.
+- Images used by COLMAP: `workspace/images/`
+- COLMAP database: `workspace/database.db`
+- Sparse model base: `workspace/sparse/0/`
+- Sparse densified model (default path when successful): `workspace/sparse/triangulated/`
+- Sparse PLY: `workspace/sparse/*/points3D_sparse.ply`
+- Sparse text model: `workspace/sparse/*/text/`
+- Dense PLY (when `--dense` succeeds): `workspace/dense/fused_dense.ply`
 
-## Quality Recommendations (Important)
+`*` is typically `triangulated` (default flow) or `0` (when sparse densification is disabled or unavailable).
 
-- Capture with high shutter speed to reduce motion blur.
-- Ensure strong overlap (60-80%) between consecutive views.
-- Move slowly and cover all angles around the object/scene.
-- Prefer fixed exposure/focus if possible (avoid auto changes).
-- Start with `--fps 2`; raise to `3-4` for fast motion, lower to `1` for slow motion.
-- Use `--matcher exhaustive` for best quality (slower, more robust).
-- Keep `--max-image-size` high (e.g. `3200-4000`) if VRAM allows.
-- If sparse output is still thin, keep default sparse densification enabled (do not pass `--no-sparse-densify`) and lower `--sift-peak-threshold` slightly (e.g. `0.0035`).
-- On non-CUDA COLMAP builds, `--dense` cannot run PatchMatch; sparse densification still works and usually improves `points3D_sparse.ply`.
-- In headless shells (no usable display), the script now auto-falls back to CPU SIFT/matching. You can also force CPU explicitly with `--cpu`.
+## Quality Guidance
 
-## Notes for Gaussian Splatting
+- Capture with stable motion and strong parallax around the subject.
+- Keep overlap high (roughly 60-80% across neighboring views).
+- Avoid motion blur, focus pumping, and auto-exposure jumps.
+- Start with `--fps 2`; lower for slow motion, raise for fast motion.
+- Prefer `--matcher exhaustive` for robust results on smaller/mid-size datasets.
+- Keep `--max-image-size` as high as GPU memory allows (commonly `2000-4000`).
+- If sparse clouds are thin, keep sparse densification enabled and tune:
+  - lower `--sift-peak-threshold` slightly (example: `0.0035`)
+  - raise `--sift-max-num-features`
 
-Most Gaussian Splatting training code needs camera poses/intrinsics + images + optional initial point cloud.
-This pipeline exports:
+## Masks
 
-- COLMAP text model (`cameras.txt`, `images.txt`, `points3D.txt`)
-- sparse or dense `.ply`
+When using `--mask-path`, masks must match image filenames and relative layout in `workspace/images`.
+Masked regions are ignored during feature extraction, which helps with dynamic objects and background clutter.
 
-These are the standard inputs expected by common GS preprocess scripts.
+## Troubleshooting
+
+- `Error: required command not found: colmap`  
+  Set `COLMAP_BIN` to your executable path.
+- Dense step skipped on non-CUDA COLMAP  
+  Sparse outputs are still valid for many 3DGS pipelines.
+- Weak or empty sparse model  
+  Try `--matcher sequential`, lower `--fps`, and improve capture overlap/parallax.
+- Headless server with no valid display  
+  Script auto-falls back to CPU SIFT/matching; you can also force `--cpu`.
+
+## Integration with 3DGS Training
+
+The pipeline exports standard COLMAP artifacts used by most 3DGS workflows:
+- Camera and pose text files: `cameras.txt`, `images.txt`, `points3D.txt`
+- Initial point cloud in `.ply` format (sparse and optionally dense)
+
+These outputs are directly consumable by common Gaussian Splatting training setups.
