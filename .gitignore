@@ -23,3 +23,7 @@ Thumbs.db
 
 # Temporary metric extraction frames
 .tmp_lpips_ref/
+# evaluation helper outputs
+_tmp_ref_frames/
+psnr_eval.log
+ssim_eval.log

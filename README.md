@@ -129,6 +129,27 @@ For the comparison of `scene.mp4` (decoded at `2 fps`) against the GS input fram
 
 Detailed methodology, channel-wise values, and reproducibility commands are in [METRICS_REPORT.md](METRICS_REPORT.md).
 
+### Automatic evaluation helper
+
+A small convenience script, `evaluate.py`, is included at the repository root and
+wraps the commands above. It will produce PSNR/SSIM averages and, if run with
+`--lpips`, compute the AlexNet LPIPS distance as well.
+
+Usage example:
+
+```bash
+# run inside the workspace root (make executable if necessary)
+python evaluate.py \
+    --ref scene.mp4 \
+    --test-pattern "scene_dense/images/frame_%06d.png" \
+    --fps 2 \
+    --lpips
+```
+
+The script requires `ffmpeg` on your PATH; LPIPS computation additionally
+needs Python packages `torch`, `lpips`, and `Pillow` which are available in
+the `.venv_metrics` virtual environment.
+
 ## Quality Guidance
 
 - Capture with stable motion and strong parallax around the subject.
@@ -164,3 +185,26 @@ The pipeline exports standard COLMAP artifacts used by most 3DGS workflows:
 - Initial point cloud in `.ply` format (sparse and optionally dense)
 
 These outputs are directly consumable by common Gaussian Splatting training setups.
+
+## Leakage-Safe Hold-Out Evaluation
+
+The repository previously included a helper script (`run_gaussian_holdout_eval.sh`)
+for performing train/test splits and computing held‑out metrics, but that
+script isn’t distributed here. You can still achieve the same result by running
+the pipeline manually:
+
+1. Split your input frames (or video) into training and test sets.
+2. Run `./run_gs_pipeline.sh` on the training subset only.
+3. Use `image_registrator` (or `colmap image_registrator`) to register the held‑out
+   frames against the fixed sparse model produced in step 2.
+4. Compute PSNR, SSIM and (optionally) LPIPS between the original held‑out
+   frames and the registered/rendered results using the commands shown in
+   [**Metrics Summary**](#metrics-summary).
+
+The commands in `METRICS_REPORT.md` demonstrate the ffmpeg filters you need;
+just substitute your own source/target paths. For LPIPS, activate the Python
+virtualenv and run the same Python snippet used in that report.
+
+> Tip: the `--` argument forwarding example in earlier sections shows how you
+> can pass extra reconstruction flags to `run_gs_pipeline.sh` when performing
+> the manual training stage.
