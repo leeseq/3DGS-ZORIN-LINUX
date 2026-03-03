@@ -1,0 +1,22 @@
+# Local build/dependency repos
+colmap/
+
+# Large media inputs
+*.mp4
+*.mov
+*.mkv
+
+# Generated recon outputs
+scene_*/
+statue_*/
+*/sparse/
+*/dense/
+*.ply
+*.bin
+
+# Optional masks/assets that can be regenerated
+masks/
+
+# OS/editor
+.DS_Store
+Thumbs.db
