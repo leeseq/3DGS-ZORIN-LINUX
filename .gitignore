@@ -20,3 +20,6 @@ masks/
 # OS/editor
 .DS_Store
 Thumbs.db
+
+# Temporary metric extraction frames
+.tmp_lpips_ref/
