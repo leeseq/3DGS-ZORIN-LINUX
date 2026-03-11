@@ -71,6 +71,37 @@ Faster high-quality preset:
   --profile fast_hq
 ```
 
+Robust high-quality preset (recommended for consistency across varied captures):
+
+```bash
+./run_gs_pipeline.sh \
+  --input ./capture.mp4 \
+  --workspace ./scene_robust \
+  --profile robust_hq \
+  --matcher auto \
+  --max-images 320 \
+  --dense \
+  --dense-profile hq \
+  --dense-input-type photometric
+```
+
+Reconstruction + benchmark gate (for hold-out GT vs rendered outputs):
+
+```bash
+./run_gs_pipeline.sh \
+  --input ./capture.mp4 \
+  --workspace ./scene_eval \
+  --profile robust_hq \
+  --dense \
+  --dense-profile hq \
+  --benchmark-ref ./holdout_gt/frame_%06d.png \
+  --benchmark-test-pattern ./holdout_render/frame_%06d.png \
+  --benchmark-lpips \
+  --benchmark-min-psnr 28 \
+  --benchmark-min-ssim 0.92 \
+  --benchmark-max-lpips 0.22
+```
+
 Sparse-only export:
 
 ```bash
@@ -84,14 +115,21 @@ Sparse-only export:
 
 - `--input`: Video file or image directory (required)
 - `--workspace`: Output workspace directory (required)
-- `--profile quality|fast_hq`: Sparse reconstruction preset
+- `--profile quality|fast_hq|robust_hq`: Sparse reconstruction preset
 - `--dense`: Enable dense reconstruction
 - `--dense-profile balanced|hq`: Dense quality/speed preset
 - `--dense-input-type geometric|photometric`: Stereo fusion mode
 - `--fps`: Frame extraction rate for video input
 - `--max-image-size`: Feature extraction image clamp
 - `--camera-model`: COLMAP camera model (`OPENCV` and `RADIAL` recommended for phones)
-- `--matcher exhaustive|sequential`: Matching strategy
+- `--matcher exhaustive|sequential|auto`: Matching strategy (`auto` picks based on image count)
+- `--max-images`: Uniformly subsample large frame sets for smoother, faster runs (`0` disables)
+- `--benchmark-ref`: Reference video/pattern for post-run metric evaluation
+- `--benchmark-test-pattern`: Test video/pattern for post-run metric evaluation
+- `--benchmark-fps`: FPS used to decode any benchmark video inputs
+- `--benchmark-lpips`: Enable LPIPS in post-run benchmark (`--benchmark-lpsis` alias also works)
+- `--benchmark-min-psnr`, `--benchmark-min-ssim`, `--benchmark-max-lpips`: Optional quality gates
+- `--benchmark-json`: Optional benchmark result JSON path (defaults to `workspace/benchmark_metrics.json`)
 - `--mask-path`: Directory of per-image masks for dynamic-object suppression
 - `--cpu`: Force CPU SIFT/matching
 - `--print-train-cmd`: Print a suggested `train.py` command
@@ -129,11 +167,15 @@ For the comparison of `scene.mp4` (decoded at `2 fps`) against the GS input fram
 
 Detailed methodology, channel-wise values, and reproducibility commands are in [METRICS_REPORT.md](METRICS_REPORT.md).
 
+Important: those numbers compare the input video against extracted input frames and are **not**
+hold-out rendering benchmarks for reconstruction quality. For true reconstruction benchmarking,
+compare held-out ground truth frames against held-out rendered outputs.
+
 ### Automatic evaluation helper
 
 A small convenience script, `evaluate.py`, is included at the repository root and
-wraps the commands above. It will produce PSNR/SSIM averages and, if run with
-`--lpips`, compute the AlexNet LPIPS distance as well.
+produces sequence-level PSNR/SSIM averages, optional LPIPS, and optional threshold
+pass/fail status (useful for benchmark gating in CI or repeatable experiments).
 
 Usage example:
 
@@ -143,7 +185,11 @@ python evaluate.py \
     --ref scene.mp4 \
     --test-pattern "scene_dense/images/frame_%06d.png" \
     --fps 2 \
-    --lpips
+    --lpips \
+    --min-psnr 30 \
+    --min-ssim 0.95 \
+    --max-lpips 0.20 \
+    --json-out ./metrics.json
 ```
 
 The script requires `ffmpeg` on your PATH; LPIPS computation additionally

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 print_help() {
   cat <<'USAGE'
@@ -19,13 +20,14 @@ Usage:
   ./run_gs_pipeline.sh \
     --input /path/to/video_or_images \
     --workspace /path/to/workspace \
-    [--profile quality|fast_hq] \
+    [--profile quality|fast_hq|robust_hq] \
     [--dense-profile balanced|hq] \
     [--dense-input-type geometric|photometric] \
     [--fps 2] \
+    [--max-images 0] \
     [--max-image-size 3200] \
     [--camera-model OPENCV] \
-    [--matcher exhaustive|sequential] \
+    [--matcher exhaustive|sequential|auto] \
     [--sift-max-num-features 12000] \
     [--sift-peak-threshold 0.004] \
     [--sift-match-max-ratio 0.85] \
@@ -36,6 +38,14 @@ Usage:
     [--mapper-filter-min-tri-angle 1.0] \
     [--mapper-tri-min-angle 1.0] \
     [--mapper-tri-complete-max-transitivity 8] \
+    [--benchmark-ref /path/to/ref_video_or_pattern] \
+    [--benchmark-test-pattern /path/to/test/frame_%06d.png] \
+    [--benchmark-fps 2] \
+    [--benchmark-lpips] \
+    [--benchmark-min-psnr 30] \
+    [--benchmark-min-ssim 0.95] \
+    [--benchmark-max-lpips 0.20] \
+    [--benchmark-json /path/to/metrics.json] \
     [--mask-path /path/to/masks] \
     [--print-train-cmd] \
     [--train-script /path/to/train.py] \
@@ -55,6 +65,19 @@ Examples:
 
   # Use existing frames/images directory
   ./run_gs_pipeline.sh --input ./images --workspace ./scene02 --matcher exhaustive
+
+  # End-to-end reconstruction + benchmark gate (recommended for hold-out renders)
+  ./run_gs_pipeline.sh \
+    --input ./capture.mp4 \
+    --workspace ./scene_eval \
+    --profile robust_hq \
+    --dense --dense-profile hq \
+    --benchmark-ref ./holdout_gt/frame_%06d.png \
+    --benchmark-test-pattern ./holdout_render/frame_%06d.png \
+    --benchmark-lpips \
+    --benchmark-min-psnr 28 \
+    --benchmark-min-ssim 0.92 \
+    --benchmark-max-lpips 0.22
 USAGE
 }
 
@@ -65,14 +88,19 @@ require_cmd() {
   fi
 }
 
+is_nonneg_number() {
+  [[ "$1" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
 INPUT=""
 WORKSPACE=""
 PROFILE="quality"
 FPS="2"
+MAX_IMAGES="0"
 MAX_IMAGE_SIZE="3200"
 CAMERA_MODEL="OPENCV"
 MASK_PATH=""
-MATCHER="exhaustive"
+MATCHER="auto"
 DO_DENSE="0"
 DO_SPARSE_DENSIFY="1"
 DENSE_PROFILE="balanced"
@@ -112,6 +140,18 @@ TRAIN_ITERATIONS="45000"
 TRAIN_DENSIFY_GRAD_THRESHOLD="0.0001"
 TRAIN_OPACITY_RESET_INTERVAL="3000"
 
+BENCHMARK_REF=""
+BENCHMARK_TEST_PATTERN=""
+BENCHMARK_FPS=""
+BENCHMARK_LPIPS="0"
+BENCHMARK_MIN_PSNR=""
+BENCHMARK_MIN_SSIM=""
+BENCHMARK_MAX_LPIPS=""
+BENCHMARK_JSON=""
+BENCHMARK_PYTHON="python3"
+BENCHMARK_EVAL_SCRIPT="$SCRIPT_DIR/evaluate.py"
+RUN_BENCHMARK="0"
+
 USER_SET_FPS="0"
 USER_SET_MAX_IMAGE_SIZE="0"
 USER_SET_MATCHER="0"
@@ -149,6 +189,10 @@ while [[ $# -gt 0 ]]; do
     --max-image-size)
       MAX_IMAGE_SIZE="$2"
       USER_SET_MAX_IMAGE_SIZE="1"
+      shift 2
+      ;;
+    --max-images)
+      MAX_IMAGES="$2"
       shift 2
       ;;
     --camera-model)
@@ -207,6 +251,46 @@ while [[ $# -gt 0 ]]; do
       MAPPER_TRI_COMPLETE_MAX_TRANSITIVITY="$2"
       shift 2
       ;;
+    --benchmark-ref)
+      BENCHMARK_REF="$2"
+      shift 2
+      ;;
+    --benchmark-test-pattern)
+      BENCHMARK_TEST_PATTERN="$2"
+      shift 2
+      ;;
+    --benchmark-fps)
+      BENCHMARK_FPS="$2"
+      shift 2
+      ;;
+    --benchmark-lpips|--benchmark-lpsis)
+      BENCHMARK_LPIPS="1"
+      shift
+      ;;
+    --benchmark-min-psnr)
+      BENCHMARK_MIN_PSNR="$2"
+      shift 2
+      ;;
+    --benchmark-min-ssim)
+      BENCHMARK_MIN_SSIM="$2"
+      shift 2
+      ;;
+    --benchmark-max-lpips)
+      BENCHMARK_MAX_LPIPS="$2"
+      shift 2
+      ;;
+    --benchmark-json)
+      BENCHMARK_JSON="$2"
+      shift 2
+      ;;
+    --benchmark-python)
+      BENCHMARK_PYTHON="$2"
+      shift 2
+      ;;
+    --benchmark-eval-script)
+      BENCHMARK_EVAL_SCRIPT="$2"
+      shift 2
+      ;;
     --print-train-cmd)
       PRINT_TRAIN_CMD="1"
       shift
@@ -251,8 +335,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$PROFILE" != "quality" && "$PROFILE" != "fast_hq" ]]; then
-  echo "Error: --profile must be quality or fast_hq." >&2
+if [[ "$PROFILE" != "quality" && "$PROFILE" != "fast_hq" && "$PROFILE" != "robust_hq" ]]; then
+  echo "Error: --profile must be quality, fast_hq, or robust_hq." >&2
   exit 1
 fi
 
@@ -275,21 +359,30 @@ if [[ "$PROFILE" == "fast_hq" ]]; then
   if [[ "$USER_SET_SIFT_MATCH_MIN_INLIERS" -eq 0 ]]; then SIFT_MATCH_MIN_INLIERS="10"; fi
 fi
 
+if [[ "$PROFILE" == "robust_hq" ]]; then
+  if [[ "$USER_SET_FPS" -eq 0 ]]; then FPS="1.5"; fi
+  if [[ "$USER_SET_MAX_IMAGE_SIZE" -eq 0 ]]; then MAX_IMAGE_SIZE="3000"; fi
+  if [[ "$USER_SET_MATCHER" -eq 0 ]]; then MATCHER="auto"; fi
+  if [[ "$USER_SET_SIFT_MAX_NUM_FEATURES" -eq 0 ]]; then SIFT_MAX_NUM_FEATURES="18000"; fi
+  if [[ "$USER_SET_SIFT_PEAK_THRESHOLD" -eq 0 ]]; then SIFT_PEAK_THRESHOLD="0.0035"; fi
+  if [[ "$USER_SET_SIFT_MATCH_MIN_INLIERS" -eq 0 ]]; then SIFT_MATCH_MIN_INLIERS="10"; fi
+fi
+
 # Dense presets can be used independently from sparse profile.
 if [[ "$DENSE_PROFILE" == "hq" ]]; then
-  PATCHMATCH_MAX_IMAGE_SIZE="2800"
+  PATCHMATCH_MAX_IMAGE_SIZE="$MAX_IMAGE_SIZE"
   PATCHMATCH_NUM_ITERATIONS="7"
   PATCHMATCH_WINDOW_RADIUS="5"
   PATCHMATCH_FILTER_MIN_NCC="0.08"
   PATCHMATCH_FILTER_MIN_TRI_ANGLE="2"
-  PATCHMATCH_FILTER_MIN_NUM_CONSISTENT="2"
-  PATCHMATCH_GEOM_CONSISTENCY_MAX_COST="1.5"
+  PATCHMATCH_FILTER_MIN_NUM_CONSISTENT="3"
+  PATCHMATCH_GEOM_CONSISTENCY_MAX_COST="1.2"
 
-  FUSION_MAX_IMAGE_SIZE="2800"
-  FUSION_MIN_NUM_PIXELS="3"
-  FUSION_MAX_REPROJ_ERROR="3"
-  FUSION_MAX_DEPTH_ERROR="0.02"
-  FUSION_MAX_NORMAL_ERROR="20"
+  FUSION_MAX_IMAGE_SIZE="$MAX_IMAGE_SIZE"
+  FUSION_MIN_NUM_PIXELS="4"
+  FUSION_MAX_REPROJ_ERROR="2.5"
+  FUSION_MAX_DEPTH_ERROR="0.015"
+  FUSION_MAX_NORMAL_ERROR="12"
 fi
 
 if [[ -z "$INPUT" || -z "$WORKSPACE" ]]; then
@@ -308,9 +401,55 @@ if [[ -n "$MASK_PATH" && ! -d "$MASK_PATH" ]]; then
   exit 1
 fi
 
-if [[ "$MATCHER" != "exhaustive" && "$MATCHER" != "sequential" ]]; then
-  echo "Error: --matcher must be exhaustive or sequential." >&2
+if [[ "$MATCHER" != "exhaustive" && "$MATCHER" != "sequential" && "$MATCHER" != "auto" ]]; then
+  echo "Error: --matcher must be exhaustive, sequential, or auto." >&2
   exit 1
+fi
+
+if [[ ! "$MAX_IMAGES" =~ ^[0-9]+$ ]]; then
+  echo "Error: --max-images must be a non-negative integer." >&2
+  exit 1
+fi
+
+if [[ -n "$BENCHMARK_REF" || -n "$BENCHMARK_TEST_PATTERN" || "$BENCHMARK_LPIPS" -eq 1 || -n "$BENCHMARK_MIN_PSNR" || -n "$BENCHMARK_MIN_SSIM" || -n "$BENCHMARK_MAX_LPIPS" ]]; then
+  RUN_BENCHMARK="1"
+fi
+
+if [[ "$RUN_BENCHMARK" -eq 1 ]]; then
+  if [[ -z "$BENCHMARK_REF" || -z "$BENCHMARK_TEST_PATTERN" ]]; then
+    echo "Error: benchmarking requires both --benchmark-ref and --benchmark-test-pattern." >&2
+    exit 1
+  fi
+  if [[ ! -f "$BENCHMARK_EVAL_SCRIPT" ]]; then
+    echo "Error: benchmark evaluator not found at $BENCHMARK_EVAL_SCRIPT" >&2
+    exit 1
+  fi
+
+  if [[ -z "$BENCHMARK_FPS" ]]; then
+    BENCHMARK_FPS="$FPS"
+  fi
+
+  if ! is_nonneg_number "$BENCHMARK_FPS"; then
+    echo "Error: --benchmark-fps must be a positive number." >&2
+    exit 1
+  fi
+  if ! awk -v v="$BENCHMARK_FPS" 'BEGIN{exit (v > 0)?0:1}'; then
+    echo "Error: --benchmark-fps must be greater than 0." >&2
+    exit 1
+  fi
+
+  if [[ -n "$BENCHMARK_MIN_PSNR" ]] && ! is_nonneg_number "$BENCHMARK_MIN_PSNR"; then
+    echo "Error: --benchmark-min-psnr must be a non-negative number." >&2
+    exit 1
+  fi
+  if [[ -n "$BENCHMARK_MIN_SSIM" ]] && ! is_nonneg_number "$BENCHMARK_MIN_SSIM"; then
+    echo "Error: --benchmark-min-ssim must be a non-negative number." >&2
+    exit 1
+  fi
+  if [[ -n "$BENCHMARK_MAX_LPIPS" ]] && ! is_nonneg_number "$BENCHMARK_MAX_LPIPS"; then
+    echo "Error: --benchmark-max-lpips must be a non-negative number." >&2
+    exit 1
+  fi
 fi
 
 case "$CAMERA_MODEL" in
@@ -347,6 +486,9 @@ fi
 
 require_cmd ffmpeg
 require_cmd "$COLMAP_BIN"  # this will check the provided path or the default name
+if [[ "$RUN_BENCHMARK" -eq 1 ]]; then
+  require_cmd "$BENCHMARK_PYTHON"
+fi
 
 # SiftGPU matching can crash when no working X/GL display is available.
 DISPLAY_OK=1
@@ -412,6 +554,10 @@ SPARSE_DIR="$WORKSPACE/sparse"
 DENSE_DIR="$WORKSPACE/dense"
 DB_PATH="$WORKSPACE/database.db"
 
+if [[ "$RUN_BENCHMARK" -eq 1 && -z "$BENCHMARK_JSON" ]]; then
+  BENCHMARK_JSON="$WORKSPACE/benchmark_metrics.json"
+fi
+
 mkdir -p "$IMAGES_DIR" "$SPARSE_DIR"
 
 is_video=0
@@ -452,6 +598,36 @@ if [[ "$img_count" -lt 20 ]]; then
   echo "Warning: only $img_count images found. Reconstruction quality may be limited." >&2
 fi
 
+if [[ "$MAX_IMAGES" -gt 0 && "$img_count" -gt "$MAX_IMAGES" ]]; then
+  echo "Note: subsampling images uniformly from $img_count to $MAX_IMAGES (--max-images)." >&2
+  mapfile -t all_images < <(find "$IMAGES_DIR" -maxdepth 1 -type f | sort)
+  declare -A keep_images=()
+  if [[ "$MAX_IMAGES" -eq 1 ]]; then
+    keep_images["${all_images[0]}"]=1
+  else
+    for ((i=0; i<MAX_IMAGES; i++)); do
+      idx=$(( i * (img_count - 1) / (MAX_IMAGES - 1) ))
+      keep_images["${all_images[$idx]}"]=1
+    done
+  fi
+  for img in "${all_images[@]}"; do
+    if [[ -z "${keep_images[$img]:-}" ]]; then
+      rm -f "$img"
+    fi
+  done
+  img_count="$MAX_IMAGES"
+fi
+
+MATCHER_EFFECTIVE="$MATCHER"
+if [[ "$MATCHER" == "auto" ]]; then
+  if [[ "$img_count" -le 350 ]]; then
+    MATCHER_EFFECTIVE="exhaustive"
+  else
+    MATCHER_EFFECTIVE="sequential"
+  fi
+  echo "Note: --matcher auto selected '$MATCHER_EFFECTIVE' for $img_count images." >&2
+fi
+
 if [[ -f "$DB_PATH" ]]; then
   rm -f "$DB_PATH"
 fi
@@ -477,25 +653,30 @@ echo "[2/9] Running COLMAP feature extraction (quality-first settings)..."
   --SiftExtraction.max_num_features "$SIFT_MAX_NUM_FEATURES" \
   --SiftExtraction.peak_threshold "$SIFT_PEAK_THRESHOLD"
 
-echo "[3/9] Running COLMAP matching ($MATCHER)..."
-if [[ "$MATCHER" == "exhaustive" ]]; then
-  "$COLMAP_BIN" exhaustive_matcher \
-    --database_path "$DB_PATH" \
-    "$FM_NUM_THREADS_OPT" "$SIFT_MATCHING_NUM_THREADS" \
-    "$FM_USE_GPU_OPT" "$USE_GPU" \
-    "$FM_GUIDED_OPT" 1 \
-    --SiftMatching.max_ratio "$SIFT_MATCH_MAX_RATIO" \
-    "$FM_MIN_INLIERS_OPT" "$SIFT_MATCH_MIN_INLIERS" \
-    --ExhaustiveMatching.block_size "$EXHAUSTIVE_BLOCK_SIZE"
-else
-  "$COLMAP_BIN" sequential_matcher \
-    --database_path "$DB_PATH" \
-    "$FM_NUM_THREADS_OPT" "$SIFT_MATCHING_NUM_THREADS" \
-    "$FM_USE_GPU_OPT" "$USE_GPU" \
-    "$FM_GUIDED_OPT" 1 \
-    --SiftMatching.max_ratio "$SIFT_MATCH_MAX_RATIO" \
-    "$FM_MIN_INLIERS_OPT" "$SIFT_MATCH_MIN_INLIERS"
-fi
+run_matching() {
+  local mode="$1"
+  echo "[3/9] Running COLMAP matching ($mode)..."
+  if [[ "$mode" == "exhaustive" ]]; then
+    "$COLMAP_BIN" exhaustive_matcher \
+      --database_path "$DB_PATH" \
+      "$FM_NUM_THREADS_OPT" "$SIFT_MATCHING_NUM_THREADS" \
+      "$FM_USE_GPU_OPT" "$USE_GPU" \
+      "$FM_GUIDED_OPT" 1 \
+      --SiftMatching.max_ratio "$SIFT_MATCH_MAX_RATIO" \
+      "$FM_MIN_INLIERS_OPT" "$SIFT_MATCH_MIN_INLIERS" \
+      --ExhaustiveMatching.block_size "$EXHAUSTIVE_BLOCK_SIZE"
+  else
+    "$COLMAP_BIN" sequential_matcher \
+      --database_path "$DB_PATH" \
+      "$FM_NUM_THREADS_OPT" "$SIFT_MATCHING_NUM_THREADS" \
+      "$FM_USE_GPU_OPT" "$USE_GPU" \
+      "$FM_GUIDED_OPT" 1 \
+      --SiftMatching.max_ratio "$SIFT_MATCH_MAX_RATIO" \
+      "$FM_MIN_INLIERS_OPT" "$SIFT_MATCH_MIN_INLIERS"
+  fi
+}
+
+run_matching "$MATCHER_EFFECTIVE"
 
 evaluate_sparse_model() {
   local model_dir="$1"
@@ -591,6 +772,34 @@ else
     "0.7" \
     "12"; then
     mapper_ok=1
+  fi
+fi
+
+if [[ "$mapper_ok" -ne 1 && "$MATCHER_EFFECTIVE" != "sequential" ]]; then
+  echo "Warning: sparse mapping failed with $MATCHER_EFFECTIVE matches; retrying with sequential matcher..." >&2
+  run_matching "sequential"
+  if run_mapper_attempt \
+    "sequential_retry_primary" \
+    "$MAPPER_MIN_NUM_MATCHES" \
+    "$MAPPER_INIT_MIN_NUM_INLIERS" \
+    "$MAPPER_ABS_POSE_MIN_INLIERS" \
+    "$MAPPER_FILTER_MIN_TRI_ANGLE" \
+    "$MAPPER_TRI_MIN_ANGLE" \
+    "$MAPPER_TRI_COMPLETE_MAX_TRANSITIVITY"; then
+    mapper_ok=1
+    MATCHER_EFFECTIVE="sequential"
+  else
+    if run_mapper_attempt \
+      "sequential_retry_relaxed" \
+      "10" \
+      "50" \
+      "12" \
+      "0.7" \
+      "0.7" \
+      "12"; then
+      mapper_ok=1
+      MATCHER_EFFECTIVE="sequential"
+    fi
   fi
 fi
 
@@ -700,6 +909,45 @@ echo "  Sparse PLY: $MODEL_PATH/points3D_sparse.ply"
 echo "  Sparse TXT: $MODEL_PATH/text"
 if [[ "$DO_DENSE" -eq 1 ]]; then
   echo "  Dense PLY : $DENSE_DIR/fused_dense.ply"
+fi
+
+if [[ "$RUN_BENCHMARK" -eq 1 ]]; then
+  echo
+  echo "[benchmark] Evaluating paired outputs with PSNR/SSIM/LPIPS..."
+  BENCHMARK_CMD=(
+    "$BENCHMARK_PYTHON" "$BENCHMARK_EVAL_SCRIPT"
+    --ref "$BENCHMARK_REF"
+    --test-pattern "$BENCHMARK_TEST_PATTERN"
+    --fps "$BENCHMARK_FPS"
+    --json-out "$BENCHMARK_JSON"
+  )
+  if [[ "$BENCHMARK_LPIPS" -eq 1 ]]; then
+    BENCHMARK_CMD+=(--lpips)
+  fi
+  if [[ -n "$BENCHMARK_MIN_PSNR" ]]; then
+    BENCHMARK_CMD+=(--min-psnr "$BENCHMARK_MIN_PSNR")
+  fi
+  if [[ -n "$BENCHMARK_MIN_SSIM" ]]; then
+    BENCHMARK_CMD+=(--min-ssim "$BENCHMARK_MIN_SSIM")
+  fi
+  if [[ -n "$BENCHMARK_MAX_LPIPS" ]]; then
+    BENCHMARK_CMD+=(--max-lpips "$BENCHMARK_MAX_LPIPS")
+  fi
+
+  set +e
+  "${BENCHMARK_CMD[@]}"
+  bench_status=$?
+  set -e
+
+  if [[ "$bench_status" -eq 2 ]]; then
+    echo "Benchmark thresholds failed. Metrics were written to: $BENCHMARK_JSON" >&2
+    exit 2
+  fi
+  if [[ "$bench_status" -ne 0 ]]; then
+    echo "Benchmark execution failed. Check input paths and metric dependencies." >&2
+    exit 1
+  fi
+  echo "Benchmark metrics JSON: $BENCHMARK_JSON"
 fi
 
 if [[ "$PRINT_TRAIN_CMD" -eq 1 ]]; then
