@@ -187,8 +187,8 @@ You can override that with `--brush-bin`.
 ## Results (Screenshots)
 
 <p align="center">
-  <img src="assets/screenshots/model.png" alt="3D model result" width="48%" />
-  <img src="assets/screenshots/mask.png" alt="Mask result" width="48%" />
+  <img src="assets/screenshots/supersplat-drjohnson.png" alt="SuperSplat drjohnson result" width="48%" />
+  <img src="assets/screenshots/supersplat-stonehenge.png" alt="SuperSplat viewer screenshot" width="48%" />
 </p>
 
 ## Metrics Summary
