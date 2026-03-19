@@ -9,13 +9,21 @@ colmap/
 # Generated recon outputs
 scene_*/
 statue_*/
+*_dense_brush/
 */sparse/
 */dense/
+*/brush_exports/
+*/database.db
 *.ply
+*.vis
 *.bin
 
 # Optional masks/assets that can be regenerated
 masks/
+
+# Local datasets / build outputs
+tandt_db/
+target/
 
 # OS/editor
 .DS_Store

@@ -102,6 +102,19 @@ Reconstruction + benchmark gate (for hold-out GT vs rendered outputs):
   --benchmark-max-lpips 0.22
 ```
 
+Reconstruction + automatic Brush training/export:
+
+```bash
+./run_gs_pipeline.sh \
+  --input ./capture.mp4 \
+  --workspace ./scene_brush \
+  --profile robust_hq \
+  --dense \
+  --brush-auto \
+  --brush-total-steps 30000 \
+  --brush-export-path brush_exports
+```
+
 Sparse-only export:
 
 ```bash
@@ -131,6 +144,14 @@ Sparse-only export:
 - `--benchmark-min-psnr`, `--benchmark-min-ssim`, `--benchmark-max-lpips`: Optional quality gates
 - `--benchmark-json`: Optional benchmark result JSON path (defaults to `workspace/benchmark_metrics.json`)
 - `--mask-path`: Directory of per-image masks for dynamic-object suppression
+- `--brush-auto`: Automatically hand the finished workspace to Brush for training/export
+- `--brush-bin`: Path to the Brush executable (defaults to local bundled app if present)
+- `--brush-with-viewer`: Launch Brush with its viewer while training
+- `--brush-total-steps`: Brush training step count
+- `--brush-max-resolution`: Brush image resolution clamp
+- `--brush-export-every`: Brush export cadence
+- `--brush-export-path`: Output folder under the workspace for Brush exports
+- `--brush-export-name`: Brush export filename template (example: `export_{iter}.ply`)
 - `--cpu`: Force CPU SIFT/matching
 - `--print-train-cmd`: Print a suggested `train.py` command
 
@@ -147,8 +168,21 @@ Primary outputs are written inside `--workspace`.
 - Sparse PLY: `workspace/sparse/*/points3D_sparse.ply`
 - Sparse text model: `workspace/sparse/*/text/`
 - Dense PLY (when `--dense` succeeds): `workspace/dense/fused_dense.ply`
+- Brush exports (when `--brush-auto` is enabled): `workspace/brush_exports/`
 
 `*` is typically `triangulated` (default flow) or `0` (when sparse densification is disabled or unavailable).
+
+## Brush Integration
+
+If Brush is installed locally, the pipeline can launch it automatically after reconstruction. The pipeline passes the finished workspace directly to Brush, which can then train and export splats using the COLMAP data produced by this repo.
+
+By default the script looks for a bundled Brush binary at:
+
+```bash
+../brush-app-x86_64-unknown-linux-gnu/brush_app
+```
+
+You can override that with `--brush-bin`.
 
 ## Results (Screenshots)
 

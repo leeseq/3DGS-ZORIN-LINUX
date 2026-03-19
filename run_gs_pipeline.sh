@@ -47,6 +47,14 @@ Usage:
     [--benchmark-max-lpips 0.20] \
     [--benchmark-json /path/to/metrics.json] \
     [--mask-path /path/to/masks] \
+    [--brush-auto] \
+    [--brush-bin /path/to/brush_app] \
+    [--brush-with-viewer] \
+    [--brush-total-steps 30000] \
+    [--brush-max-resolution 1920] \
+    [--brush-export-every 5000] \
+    [--brush-export-path brush_exports] \
+    [--brush-export-name export_{iter}.ply] \
     [--print-train-cmd] \
     [--train-script /path/to/train.py] \
     [--train-iterations 45000] \
@@ -78,6 +86,16 @@ Examples:
     --benchmark-min-psnr 28 \
     --benchmark-min-ssim 0.92 \
     --benchmark-max-lpips 0.22
+
+  # Reconstruction + automatic Brush training/export
+  ./run_gs_pipeline.sh \
+    --input ./capture.mp4 \
+    --workspace ./scene_brush \
+    --profile robust_hq \
+    --dense \
+    --brush-auto \
+    --brush-total-steps 30000 \
+    --brush-export-path brush_exports
 USAGE
 }
 
@@ -139,7 +157,19 @@ TRAIN_SCRIPT="train.py"
 TRAIN_ITERATIONS="45000"
 TRAIN_DENSIFY_GRAD_THRESHOLD="0.0001"
 TRAIN_OPACITY_RESET_INTERVAL="3000"
-
+DEFAULT_BRUSH_BIN="$SCRIPT_DIR/../brush-app-x86_64-unknown-linux-gnu/brush_app"
+if [[ -x "$DEFAULT_BRUSH_BIN" ]]; then
+  BRUSH_BIN="$DEFAULT_BRUSH_BIN"
+else
+  BRUSH_BIN="brush_app"
+fi
+BRUSH_AUTO="0"
+BRUSH_WITH_VIEWER="0"
+BRUSH_TOTAL_STEPS="30000"
+BRUSH_MAX_RESOLUTION="1920"
+BRUSH_EXPORT_EVERY="5000"
+BRUSH_EXPORT_PATH="brush_exports"
+BRUSH_EXPORT_NAME="export_{iter}.ply"
 BENCHMARK_REF=""
 BENCHMARK_TEST_PATTERN=""
 BENCHMARK_FPS=""
@@ -289,6 +319,38 @@ while [[ $# -gt 0 ]]; do
       ;;
     --benchmark-eval-script)
       BENCHMARK_EVAL_SCRIPT="$2"
+      shift 2
+      ;;
+    --brush-auto)
+      BRUSH_AUTO="1"
+      shift
+      ;;
+    --brush-bin)
+      BRUSH_BIN="$2"
+      shift 2
+      ;;
+    --brush-with-viewer)
+      BRUSH_WITH_VIEWER="1"
+      shift
+      ;;
+    --brush-total-steps)
+      BRUSH_TOTAL_STEPS="$2"
+      shift 2
+      ;;
+    --brush-max-resolution)
+      BRUSH_MAX_RESOLUTION="$2"
+      shift 2
+      ;;
+    --brush-export-every)
+      BRUSH_EXPORT_EVERY="$2"
+      shift 2
+      ;;
+    --brush-export-path)
+      BRUSH_EXPORT_PATH="$2"
+      shift 2
+      ;;
+    --brush-export-name)
+      BRUSH_EXPORT_NAME="$2"
       shift 2
       ;;
     --print-train-cmd)
@@ -948,6 +1010,40 @@ if [[ "$RUN_BENCHMARK" -eq 1 ]]; then
     exit 1
   fi
   echo "Benchmark metrics JSON: $BENCHMARK_JSON"
+fi
+
+if [[ "$BRUSH_AUTO" -eq 1 ]]; then
+  echo
+  echo "[brush] Starting Brush training/export..."
+  if [[ "$BRUSH_BIN" == */* ]]; then
+    if [[ ! -x "$BRUSH_BIN" ]]; then
+      echo "Error: --brush-bin is not executable: $BRUSH_BIN" >&2
+      exit 1
+    fi
+  elif ! command -v "$BRUSH_BIN" >/dev/null 2>&1; then
+    echo "Error: brush binary not found: $BRUSH_BIN" >&2
+    exit 1
+  fi
+
+  BRUSH_EXPORT_DIR="$WORKSPACE/$BRUSH_EXPORT_PATH"
+  mkdir -p "$BRUSH_EXPORT_DIR"
+
+  BRUSH_CMD=(
+    "$BRUSH_BIN"
+    "$WORKSPACE"
+    --total-steps "$BRUSH_TOTAL_STEPS"
+    --max-resolution "$BRUSH_MAX_RESOLUTION"
+    --export-every "$BRUSH_EXPORT_EVERY"
+    --export-path "$BRUSH_EXPORT_DIR"
+    --export-name "$BRUSH_EXPORT_NAME"
+  )
+  if [[ "$BRUSH_WITH_VIEWER" -eq 1 ]]; then
+    BRUSH_CMD+=(--with-viewer)
+  fi
+
+  echo "[brush] Command: ${BRUSH_CMD[*]}"
+  "${BRUSH_CMD[@]}"
+  echo "[brush] Exports written to: $BRUSH_EXPORT_DIR"
 fi
 
 if [[ "$PRINT_TRAIN_CMD" -eq 1 ]]; then
