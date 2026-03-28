@@ -10,6 +10,10 @@ This project automates:
 - Optional dense reconstruction (`PatchMatch` + `stereo_fusion`)
 - Export of `.ply` and COLMAP text models for downstream 3DGS training
 
+The repository currently exposes two entry points:
+- `./run_gs_pipeline.sh`: GUI-aware launcher that opens the Tkinter pipeline monitor when a desktop display is available
+- `./run_gs_pipeline_core.sh`: the underlying shell pipeline for direct or headless runs
+
 ## Requirements
 
 - Linux shell (`bash`)
@@ -32,8 +36,18 @@ export COLMAP_BIN=/absolute/path/to/colmap
 
 ## Quick Start
 
+Open the GUI launcher:
+
 ```bash
-./run_gs_pipeline.sh \
+./run_gs_pipeline.sh
+```
+
+Then choose an input file or folder, choose a workspace, toggle `Dense`, `Brush Auto`, and `Brush Viewer`, and click `Start Pipeline`.
+
+Run the pipeline directly in the shell without the GUI:
+
+```bash
+RUN_GS_PIPELINE_NO_GUI=1 ./run_gs_pipeline.sh \
   --input /path/to/capture.mp4 \
   --workspace ./scene01 \
   --fps 2 \
@@ -46,7 +60,7 @@ export COLMAP_BIN=/absolute/path/to/colmap
 For input images instead of video:
 
 ```bash
-./run_gs_pipeline.sh --input /path/to/images --workspace ./scene02 --dense
+RUN_GS_PIPELINE_NO_GUI=1 ./run_gs_pipeline.sh --input /path/to/images --workspace ./scene02 --dense
 ```
 
 ## Typical Workflows
@@ -105,15 +119,16 @@ Reconstruction + benchmark gate (for hold-out GT vs rendered outputs):
 Reconstruction + automatic Brush training/export:
 
 ```bash
-./run_gs_pipeline.sh \
+RUN_GS_PIPELINE_NO_GUI=1 ./run_gs_pipeline.sh \
   --input ./capture.mp4 \
   --workspace ./scene_brush \
   --profile robust_hq \
   --dense \
-  --brush-auto \
   --brush-total-steps 30000 \
   --brush-export-path brush_exports
 ```
+
+Current repo defaults already enable `Brush Auto` and `Brush Viewer`, so the explicit `--brush-auto` and `--brush-with-viewer` flags are only needed if you override those defaults elsewhere.
 
 Sparse-only export:
 
@@ -157,6 +172,22 @@ Sparse-only export:
 
 Use `./run_gs_pipeline.sh --help` for the full list.
 
+## GUI Launcher
+
+When `DISPLAY` is available, `./run_gs_pipeline.sh` opens the Tkinter monitor instead of starting the shell pipeline immediately. The GUI allows you to:
+
+- Select a video file or an image directory
+- Select a workspace directory
+- Toggle `Dense`, `Brush Auto`, and `Brush Viewer`
+- Start or cancel the pipeline
+- Watch progress, stage status, live logs, and VRAM usage
+
+To bypass the GUI and run the core shell pipeline directly:
+
+```bash
+RUN_GS_PIPELINE_NO_GUI=1 ./run_gs_pipeline.sh --input ./scene.mp4 --workspace ./scene_dense --dense
+```
+
 ## Outputs
 
 Primary outputs are written inside `--workspace`.
@@ -179,10 +210,17 @@ If Brush is installed locally, the pipeline can launch it automatically after re
 By default the script looks for a bundled Brush binary at:
 
 ```bash
-../brush-app-x86_64-unknown-linux-gnu/brush_app
+./brush-app-x86_64-unknown-linux-gnu/brush_app
 ```
 
 You can override that with `--brush-bin`.
+
+Current defaults in `run_gs_pipeline_core.sh`:
+
+- `BRUSH_AUTO="1"`
+- `BRUSH_WITH_VIEWER="1"`
+
+That means Brush training/export and the Brush viewer are started automatically unless you change those defaults in the script.
 
 ## Results (Screenshots)
 
@@ -193,17 +231,22 @@ You can override that with `--brush-bin`.
 
 ## Metrics Summary
 
-For the comparison of `scene.mp4` (decoded at `2 fps`) against the GS input frames in `scene_dense/images` (43 frames):
+Current 3DGS-style image-quality metrics are taken from the held-out Brush export evaluation documented in [METRICS_REPORT.md](METRICS_REPORT.md).
 
-- **PSNR:** `35.096 dB` (higher is better)
-- **SSIM:** `0.995234` (closer to 1 is better)
-- **LPIPS (AlexNet):** `0.000000` (lower is better)
+For the `drjohnson_dense_brush` workspace at export step `30000`:
 
-Detailed methodology, channel-wise values, and reproducibility commands are in [METRICS_REPORT.md](METRICS_REPORT.md).
+- **PSNR:** `33.194151 dB` (higher is better)
+- **SSIM:** `0.937046` (closer to 1 is better)
+- **LPIPS (AlexNet):** `0.157475` (lower is better)
 
-Important: those numbers compare the input video against extracted input frames and are **not**
-hold-out rendering benchmarks for reconstruction quality. For true reconstruction benchmarking,
-compare held-out ground truth frames against held-out rendered outputs.
+Those values compare saved held-out renders from the trained Brush export against held-out reference images, which makes them actual reconstruction/rendering metrics rather than source-image extraction checks.
+
+Brush's internal evaluation at iteration `30000` for the same run:
+
+- **PSNR:** `29.965265 dB`
+- **SSIM:** `0.9023107`
+
+Detailed methodology, dataset split, and reproducibility commands are in [METRICS_REPORT.md](METRICS_REPORT.md).
 
 ### Automatic evaluation helper
 
@@ -251,12 +294,18 @@ Masked regions are ignored during feature extraction, which helps with dynamic o
 
 - `Error: required command not found: colmap`  
   Set `COLMAP_BIN` to your executable path.
+- `Error: brush binary not found`  
+  The bundled default path is `./brush-app-x86_64-unknown-linux-gnu/brush_app`; override with `--brush-bin` if needed.
 - Dense step skipped on non-CUDA COLMAP  
   Sparse outputs are still valid for many 3DGS pipelines.
+- Dense fusion ends with `Killed` / OOM  
+  Reduce `--fps`, cap with `--max-images`, use `--dense-profile balanced`, or skip `--dense`.
 - Weak or empty sparse model  
   Try `--matcher sequential`, lower `--fps`, and improve capture overlap/parallax.
 - Headless server with no valid display  
   Script auto-falls back to CPU SIFT/matching; you can also force `--cpu`.
+- GUI does not open  
+  Run from a desktop session, or bypass the GUI with `RUN_GS_PIPELINE_NO_GUI=1`.
 
 ## Integration with 3DGS Training
 
