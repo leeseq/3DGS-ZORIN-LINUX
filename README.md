@@ -14,6 +14,12 @@ The repository currently exposes two entry points:
 - `./run_gs_pipeline.sh`: GUI-aware launcher that opens the Tkinter pipeline monitor when a desktop display is available
 - `./run_gs_pipeline_core.sh`: the underlying shell pipeline for direct or headless runs
 
+## Pipeline Flowchart
+
+[Paper](Paper.pdf)
+
+![3DGS Pipeline Flowchart](FLOWCHART%203DGS%20PIPELINE.png)
+
 ## Requirements
 
 - Linux shell (`bash`)
